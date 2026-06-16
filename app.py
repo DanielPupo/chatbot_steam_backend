@@ -7,7 +7,7 @@ if sys.platform != "win32":
     except ImportError:
         print("Gevent não instalado!")
 
-from flask import Flask, request, session, jsonify
+import flask
 from flask_socketio import SocketIO, emit
 from google import genai
 from google.genai import types
@@ -41,16 +41,16 @@ Se o contexto inicial não deixar claro se o usuário é aluno ou professor, fa�
 """
 
 client = genai.Client(api_key=os.getenv("GENAI_KEY"))
-app = Flask(__name__)
+app = flask.Flask(__name__)
 app.secret_key = "steam_plus_lego_secret_super_key"
 socketio = SocketIO(app, cors_allowed_origins="*")
 active_chats = {}
 
 def get_user_chat():
-    if 'session_id' not in session:
-        session['session_id'] = str(uuid4())
+    if 'session_id' not in flask.session:
+        flask.session['session_id'] = str(uuid4())
 
-    session_id = session['session_id']
+    session_id = flask.session['session_id']
 
     if session_id not in active_chats or active_chats[session_id] is None:
         try:
@@ -67,7 +67,7 @@ def get_user_chat():
 
 @app.route('/')
 def root():
-    return jsonify({
+    return flask.jsonify({
         "plataforma": "STEAM+",
         "modulo": "Assistente de Aprendizagem & Gestão",
         "avatar_tema": "LEGO Custom Build"
@@ -77,7 +77,7 @@ def root():
 def handle_connect():
     try:
         get_user_chat()
-        user_session_id = session.get('session_id', 'N/A')
+        user_session_id = flask.session.get('session_id', 'N/A')
         emit('status_conexao', {'data': 'Sparky inicializado com sucesso!', 'session_id': user_session_id})
     except Exception as e:
         app.logger.error(f"Erro ao conectar com Sparky: {e}", exc_info=True)
@@ -103,7 +103,7 @@ def handle_enviar_mensagem(data):
             else resposta_gemini.candidates[0].content.parts[0].text
         )
         
-        emit('nova_mensagem', {"remetente": "bot", "texto": resposta_texto, "session_id": session.get('session_id')})
+        emit('nova_mensagem', {"remetente": "bot", "texto": resposta_texto, "session_id": flask.session.get('session_id')})
 
     except Exception as e:
         app.logger.error(f"Erro de processamento na mensagem: {e}", exc_info=True)
