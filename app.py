@@ -17,6 +17,10 @@ import os
 
 load_dotenv()
 
+API_KEY = os.getenv("GENAI_KEY")
+if not API_KEY:
+    raise RuntimeError("GENAI_KEY não encontrado. Verifique o arquivo .env e a variável de ambiente.")
+
 # Usando o modelo moderno e performático para interações de chat textuais
 MODELO = "gemini-3.1-flash"
 
@@ -40,10 +44,10 @@ Diretrizes Críticas de Personalidade e Formato:
 Se o contexto inicial não deixar claro se o usuário é aluno ou professor, faça uma saudação amigável e pergunte educadamente quem está operando o painel para ajustar sua abordagem.
 """
 
-client = genai.Client(api_key=os.getenv("GENAI_KEY"))
+client = genai.Client(api_key=API_KEY)
 app = flask.Flask(__name__)
-app.secret_key = "steam_plus_lego_secret_super_key"
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "steam_plus_lego_secret_super_key")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 active_chats = {}
 
 def get_user_chat():
@@ -61,7 +65,7 @@ def get_user_chat():
             active_chats[session_id] = chat_session
         except Exception as e:
             app.logger.error(f"Erro ao inicializar Sparky para {session_id}: {e}", exc_info=True)
-            raise  
+            raise
 
     return active_chats[session_id]
 
@@ -97,12 +101,17 @@ def handle_enviar_mensagem(data):
             return
 
         resposta_gemini = user_chat.send_message(mensagem_usuario)
-        resposta_texto = (
-            resposta_gemini.text
-            if hasattr(resposta_gemini, 'text')
-            else resposta_gemini.candidates[0].content.parts[0].text
-        )
-        
+        if hasattr(resposta_gemini, 'text') and resposta_gemini.text:
+            resposta_texto = resposta_gemini.text
+        else:
+            resposta_texto = None
+            if hasattr(resposta_gemini, 'candidates') and resposta_gemini.candidates:
+                candidate = resposta_gemini.candidates[0]
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts') and candidate.content.parts:
+                    resposta_texto = candidate.content.parts[0].text
+            if resposta_texto is None:
+                resposta_texto = str(resposta_gemini)
+
         emit('nova_mensagem', {"remetente": "bot", "texto": resposta_texto, "session_id": flask.session.get('session_id')})
 
     except Exception as e:
