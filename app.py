@@ -40,11 +40,11 @@ CORS_ORIGINS = [
 CORS_ORIGINS = [url for url in CORS_ORIGINS if url]
 
 socketio = SocketIO(
-    app, 
-    cors_allowed_origins=CORS_ORIGINS if CORS_ORIGINS else "*",
-    async_mode="threading",
-    ping_timeout=60,
-    ping_interval=25
+    app,
+    cors_allowed_origins="*",  # Permite que o seu front-end na Vercel acesse o Render sem bloqueios de segurança
+    async_mode="threading",    # Modo seguro para gerenciar requisições assíncronas no Render
+    ping_timeout=60,           # Tempo limite estendido (60s) para evitar que o Render feche a conexão por inatividade
+    ping_interval=25           # Intervalo de verificação de pulso (heartbeat)
 )
 client = genai.Client(api_key=API_KEY)
 
