@@ -1,8 +1,13 @@
 flask
 flask-cors
-flask-SocketIO
+flask-socketio
 google-genai
 python-dotenv
 gunicorn
 gevent
 gevent-websocket
+
+flask-limiter
+bleach
+redis
+psycopg2-binary

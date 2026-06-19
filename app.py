@@ -1,126 +1,138 @@
 import sys
+import os
+import logging
+from uuid import uuid4
+from flask import Flask, session, send_from_directory
+from flask_socketio import SocketIO, emit
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 
 if sys.platform != "win32":
     try:
         from gevent import monkey
         monkey.patch_all()
     except ImportError:
-        print("Gevent não instalado!")
-
-import flask
-from flask_socketio import SocketIO, emit
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
-from uuid import uuid4
-import os
+        pass
 
 load_dotenv()
 
 API_KEY = os.getenv("GENAI_KEY")
 if not API_KEY:
-    raise RuntimeError("GENAI_KEY não encontrado. Verifique o arquivo .env e a variável de ambiente.")
+    raise RuntimeError("A chave de API 'GENAI_KEY' não foi encontrada.")
 
-# Usando o modelo moderno e performático para interações de chat textuais
-MODELO = "gemini-3.1-flash"
+MODELO = "gemini-2.5-flash"
+MAX_MESSAGE_SIZE = 3000
 
-instrucoes = """
-Você é o 'Sparky', o assistente virtual inteligente e companheiro da plataforma STEAM+ (Ciência, Tecnologia, Engenharia, Artes, Matemática e +).
-Seu público-alvo é composto por alunos do 6º ao 8º ano do Ensino Fundamental II e seus respectivos professores. 
-Toda a plataforma é gamificada com a temática de LEGO (avatares customizáveis, ganho de XP e conquista de Stickers de blocos).
+logging.basicConfig(level=logging.INFO)
 
-Diretrizes Críticas de Personalidade e Formato:
-1. Tom de Voz Adaptativo:
-   - Se o usuário se identificar ou agir como ALUNO: Seja extremamente animado, motivador, use emojis de robôs/blocos (🤖, 🧱, 🚀) e linguagem amigável. Explique conceitos de robótica, circuitos ou lógica de programação de forma simples usando metáforas com peças de encaixe e Lego. Incentive o trabalho em equipe.
-   - Se o usuário se identificar ou agir como PROFESSOR: Seja um parceiro de produtividade focado, profissional, polido e solícito. Ajude-o a otimizar a gestão de tempo, organização de equipes e metodologias ativas.
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "steam_plus_super_secret")
 
-2. Respostas Objetivas e Escaneáveis:
-   - Evite blocos massivos de texto. Use listas com marcadores e termos em negrito para facilitar a leitura rápida de alunos hiperconectados e professores ocupados.
+# Configurar CORS para frontend em desenvolvimento e produção
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000",
+    os.getenv("FRONTEND_URL", "")
+]
+CORS_ORIGINS = [url for url in CORS_ORIGINS if url]
 
-3. Perguntas Frequentes da Base de Conhecimento:
-   - ALUNOS perguntam sobre: Como ganhar XP e Stickers (fazendo tarefas e aguardando o professor avaliar/marcar como entregue); Como usar o XP (na lojinha de avatares para comprar acessórios LEGO); Ajuda com lógica de blocos (Scratch), montagem de protótipos ou circuitos elétricos em série/paralelo.
-   - PROFESSORES perguntam sobre: Como criar e gerenciar grupos; Como aplicar autoavaliações e provas na plataforma; Como liberar os XPs e stickers (lembre-o de que o sistema distribui as recompensas automaticamente assim que ele atribui a nota e clica em "Marcar como Entregue").
-
-Se o contexto inicial não deixar claro se o usuário é aluno ou professor, faça uma saudação amigável e pergunte educadamente quem está operando o painel para ajustar sua abordagem.
-"""
-
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins=CORS_ORIGINS if CORS_ORIGINS else "*",
+    async_mode="threading",
+    ping_timeout=60,
+    ping_interval=25
+)
 client = genai.Client(api_key=API_KEY)
-app = flask.Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "steam_plus_lego_secret_super_key")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
 active_chats = {}
 
+INSTRUCOES = """
+Você é o Sparky, o assistente inteligente da plataforma STEAM+ focada em robótica e cultura maker com blocos LEGO.
+Seu público-alvo são alunos e professores do Ensino Fundamental II.
+
+Diretrizes de Resposta:
+1. Tom Entusiasta e Educativo: Use analogias de encaixe de blocos de montar, engrenagens e programação.
+2. Gamificação NAtiva: Incentive o ganho de XP e a realização das metas semanais dos projetos práticos.
+3. Respostas direto ao ponto: Ajude os usuários rapidamente e sempre formate respostas usando negritos organizados.
+"""
+
 def get_user_chat():
-    if 'session_id' not in flask.session:
-        flask.session['session_id'] = str(uuid4())
+    if "session_id" not in session:
+        session["session_id"] = str(uuid4())
+    
+    sid = session["session_id"]
+    if sid not in active_chats:
+        config = types.GenerateContentConfig(
+            system_instruction=INSTRUCOES,
+            temperature=0.7
+        )
+        active_chats[sid] = client.chats.create(model=MODELO, config=config)
+    return active_chats[sid]
 
-    session_id = flask.session['session_id']
-
-    if session_id not in active_chats or active_chats[session_id] is None:
-        try:
-            chat_session = client.chats.create(
-                model=MODELO,
-                config=types.GenerateContentConfig(system_instruction=instrucoes)
-            )
-            active_chats[session_id] = chat_session
-        except Exception as e:
-            app.logger.error(f"Erro ao inicializar Sparky para {session_id}: {e}", exc_info=True)
-            raise
-
-    return active_chats[session_id]
-
-@app.route('/')
-def root():
-    return flask.jsonify({
-        "plataforma": "STEAM+",
-        "modulo": "Assistente de Aprendizagem & Gestão",
-        "avatar_tema": "LEGO Custom Build"
-    })
-
-@socketio.on('connect')
+@socketio.on("connect")
 def handle_connect():
     try:
+        user_session_id = session.get("session_id") or str(uuid4())
+        session["session_id"] = user_session_id
         get_user_chat()
-        user_session_id = flask.session.get('session_id', 'N/A')
-        emit('status_conexao', {'data': 'Sparky inicializado com sucesso!', 'session_id': user_session_id})
+        
+        logging.info(f"✅ Cliente conectado: {user_session_id}")
+        emit("status_conexao", {
+            "data": "Conectado",
+            "session_id": user_session_id,
+            "timestamp": str(__import__('datetime').datetime.now())
+        })
     except Exception as e:
-        app.logger.error(f"Erro ao conectar com Sparky: {e}", exc_info=True)
-        emit('erro', {'erro': 'O Sparky está reiniciando seus blocos de memória. Tente em instantes.'})
+        logging.error(f"❌ Erro na conexão: {str(e)}", exc_info=True)
+        emit("erro", {"erro": "Falha ao conectar. Tente novamente."})
 
-@socketio.on('enviar_mensagem')
-def handle_enviar_mensagem(data):
+@socketio.on("enviar_mensagem")
+def handle_message(data):
     try:
-        mensagem_usuario = data.get("mensagem")
-        if not mensagem_usuario:
-            emit('erro', {"erro": "Você não pode enviar um comando vazio."})
+        texto = data.get("mensagem", "").strip()
+        if not texto:
+            emit("erro", {"erro": "A mensagem não pode estar em branco."})
             return
 
-        user_chat = get_user_chat()
-        if user_chat is None:
-            emit('erro', {"erro": "Conexão perdida com a central STEAM+."})
+        if len(texto) > MAX_MESSAGE_SIZE:
+            emit("erro", {"erro": f"Mensagem muito longa (máx: {MAX_MESSAGE_SIZE} caracteres)"})
             return
 
-        resposta_gemini = user_chat.send_message(mensagem_usuario)
-        if hasattr(resposta_gemini, 'text') and resposta_gemini.text:
-            resposta_texto = resposta_gemini.text
-        else:
-            resposta_texto = None
-            if hasattr(resposta_gemini, 'candidates') and resposta_gemini.candidates:
-                candidate = resposta_gemini.candidates[0]
-                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts') and candidate.content.parts:
-                    resposta_texto = candidate.content.parts[0].text
-            if resposta_texto is None:
-                resposta_texto = str(resposta_gemini)
-
-        emit('nova_mensagem', {"remetente": "bot", "texto": resposta_texto, "session_id": flask.session.get('session_id')})
-
+        logging.info(f"📨 Mensagem recebida da sessão {session.get('session_id')}: {texto[:50]}...")
+        
+        chat = get_user_chat()
+        resposta = chat.send_message(texto)
+        
+        logging.info(f"✅ Resposta gerada: {resposta.text[:50]}...")
+        emit("nova_mensagem", {
+            "remetente": "bot",
+            "texto": resposta.text,
+            "timestamp": str(__import__('datetime').datetime.now())
+        })
     except Exception as e:
-        app.logger.error(f"Erro de processamento na mensagem: {e}", exc_info=True)
-        emit('erro', {"erro": "Ocorreu uma falha ao conectar com o motor de IA. Tente reenviar."})
+        logging.error(f"❌ Erro ao processar mensagem: {str(e)}", exc_info=True)
+        emit("erro", {"erro": "Ocorreu um erro ao gerar a resposta. Tente novamente."})
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    pass
+@app.route('/')
+def serve_frontend():
+    """Serve o arquivo HTML principal e arquivos estáticos"""
+    frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
+    return send_from_directory(frontend_path, 'index.html')
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    """Serve arquivos estáticos (CSS, JS, etc)"""
+    frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
+    return send_from_directory(frontend_path, filename)
+
+@app.route('/health')
+def health():
+    """Endpoint de verificação de saúde do servidor"""
+    return {"status": "ok", "service": "STEAM+ Sparky Chatbot", "timestamp": str(__import__('datetime').datetime.now())}
 
 if __name__ == "__main__":
-    socketio.run(app)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
