@@ -119,20 +119,34 @@ def handle_message(data):
 
 @app.route('/')
 def serve_frontend():
-    """Serve o arquivo HTML principal e arquivos estáticos"""
-    frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
-    return send_from_directory(frontend_path, 'index.html')
+    """Serve o arquivo HTML principal"""
+    try:
+        frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
+        return send_from_directory(frontend_path, 'index.html')
+    except Exception as e:
+        logging.error(f"Erro ao servir frontend: {e}")
+        return {"status": "ok", "service": "STEAM+ Sparky Chatbot - Backend Running"}, 200
 
 @app.route('/<path:filename>')
 def serve_static(filename):
     """Serve arquivos estáticos (CSS, JS, etc)"""
-    frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
-    return send_from_directory(frontend_path, filename)
+    try:
+        frontend_path = os.path.join(os.path.dirname(__file__), '..', 'chatbot_steam_frontend')
+        return send_from_directory(frontend_path, filename)
+    except Exception as e:
+        logging.error(f"Erro ao servir {filename}: {e}")
+        return {"error": "File not found"}, 404
 
 @app.route('/health')
+@app.route('/api/health')
 def health():
     """Endpoint de verificação de saúde do servidor"""
-    return {"status": "ok", "service": "STEAM+ Sparky Chatbot", "timestamp": str(__import__('datetime').datetime.now())}
+    return {
+        "status": "ok",
+        "service": "STEAM+ Sparky Chatbot",
+        "environment": os.getenv("FLASK_ENV", "development"),
+        "timestamp": str(__import__('datetime').datetime.now())
+    }
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
